@@ -2,7 +2,6 @@ from timm.models.layers import DropPath, to_2tuple, trunc_normal_
 import math
 import torch.nn as nn
 
-
 class Local_Relational_Block(nn.Module):
 
     def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=nn.GELU, drop=0.):
@@ -10,8 +9,7 @@ class Local_Relational_Block(nn.Module):
         out_features = out_features or in_features
         hidden_features = hidden_features or in_features
         self.linear1 = nn.Linear(in_features, hidden_features)
-        self.TC = nn.Conv1d(hidden_features, hidden_features, 3, 1, 1,
-                            bias=True, groups=hidden_features)  # k=3, stride=1, padding=1
+        self.TC = nn.Conv1d(hidden_features, hidden_features, 3, 1, 1, bias=True, groups=hidden_features) # k=3, stride=1, padding=1
         self.act = act_layer()
         self.linear2 = nn.Linear(hidden_features, out_features)
         self.drop = nn.Dropout(drop)
@@ -48,8 +46,7 @@ class Local_Relational_Block(nn.Module):
 class Global_Relational_Block(nn.Module):
     def __init__(self, dim, num_heads=8):
         super().__init__()
-        assert dim % num_heads == 0, f"dim {
-            dim} should be divided by num_heads {num_heads}."
+        assert dim % num_heads == 0, f"dim {dim} should be divided by num_heads {num_heads}."
 
         self.dim = dim
         self.num_heads = num_heads
@@ -78,10 +75,8 @@ class Global_Relational_Block(nn.Module):
 
     def forward(self, x):
         B, N, C = x.shape
-        q = self.q(x).reshape(B, N, self.num_heads, C //
-                              self.num_heads).permute(0, 2, 1, 3)
-        kv = self.kv(x).reshape(B, -1, 2, self.num_heads, C //
-                                self.num_heads).permute(2, 0, 3, 1, 4)
+        q = self.q(x).reshape(B, N, self.num_heads, C // self.num_heads).permute(0, 2, 1, 3)
+        kv = self.kv(x).reshape(B, -1, 2, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
         k, v = kv[0], kv[1]
 
         attn = (q @ k.transpose(-2, -1)) * self.scale
@@ -102,12 +97,11 @@ class GLRBlock(nn.Module):
         super().__init__()
         self.norm1 = norm_layer(dim)
         self.Global_Relational_Block = Global_Relational_Block(
-            dim, num_heads=num_heads)
-
+            dim,num_heads=num_heads)
+        
         self.norm2 = norm_layer(dim)
         mlp_hidden_dim = int(dim * mlp_ratio)
-        self.Local_Relational_Block = Local_Relational_Block(
-            in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=drop)
+        self.Local_Relational_Block = Local_Relational_Block(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=drop)
 
         self.apply(self._init_weights)
 
@@ -136,12 +130,11 @@ class Temporal_Merging_Block(nn.Module):
     """
     Temporal_Merging_Block
     """
-    # Monish Changed -> 1024 to 512
 
-    def __init__(self, kernel_size=3, stride=1, in_chans=512, embed_dim=256):
+    def __init__(self, kernel_size=3, stride=1, in_chans=1024, embed_dim=256):
         super().__init__()
         self.proj = nn.Conv1d(in_chans, embed_dim, kernel_size=kernel_size, stride=stride,
-                              padding=(kernel_size // 2))
+                              padding=(kernel_size// 2))
         self.norm = nn.LayerNorm(embed_dim)
         self.apply(self._init_weights)
 
@@ -169,41 +162,40 @@ class Temporal_Merging_Block(nn.Module):
 
 
 class TemporalEncoder(nn.Module):
-    # Monish Changed -> 1024 to 512
-    def __init__(self, in_feat_dim=512, embed_dims=[256, 384, 576, 864],
+    def __init__(self, in_feat_dim=1024, embed_dims=[256, 384, 576, 864],
                  num_head=8, mlp_ratio=8, norm_layer=nn.LayerNorm,
                  num_block=3):
         super().__init__()
 
         # Stage 1
         self.Temporal_Merging_Block1 = Temporal_Merging_Block(kernel_size=3, stride=1, in_chans=in_feat_dim,
-                                                              embed_dim=embed_dims[0])
+                                              embed_dim=embed_dims[0])
         self.block1 = nn.ModuleList([GLRBlock(
-            dim=embed_dims[0], num_heads=num_head, mlp_ratio=mlp_ratio, norm_layer=norm_layer)
+            dim=embed_dims[0], num_heads=num_head, mlp_ratio=mlp_ratio,norm_layer=norm_layer)
             for i in range(num_block)])
         self.norm1 = norm_layer(embed_dims[0])
 
         # Stage 2
         self.Temporal_Merging_Block2 = Temporal_Merging_Block(kernel_size=3, stride=2, in_chans=embed_dims[0],
-                                                              embed_dim=embed_dims[1])
+                                              embed_dim=embed_dims[1])
         self.block2 = nn.ModuleList([GLRBlock(
-            dim=embed_dims[1], num_heads=num_head, mlp_ratio=mlp_ratio, norm_layer=norm_layer)
+            dim=embed_dims[1], num_heads=num_head, mlp_ratio=mlp_ratio,norm_layer=norm_layer)
             for i in range(num_block)])
         self.norm2 = norm_layer(embed_dims[1])
 
         # Stage 3
         self.Temporal_Merging_Block3 = Temporal_Merging_Block(kernel_size=3, stride=2, in_chans=embed_dims[1],
-                                                              embed_dim=embed_dims[2])
+                                              embed_dim=embed_dims[2])
         self.block3 = nn.ModuleList([GLRBlock(
-            dim=embed_dims[2], num_heads=num_head, mlp_ratio=mlp_ratio, norm_layer=norm_layer)
+            dim=embed_dims[2], num_heads=num_head, mlp_ratio=mlp_ratio,norm_layer=norm_layer)
             for i in range(num_block)])
         self.norm3 = norm_layer(embed_dims[2])
 
         # Stage 4
         self.Temporal_Merging_Block4 = Temporal_Merging_Block(kernel_size=3, stride=2, in_chans=embed_dims[2],
-                                                              embed_dim=embed_dims[3])
+                                              embed_dim=embed_dims[3])
         self.block4 = nn.ModuleList([GLRBlock(
-            dim=embed_dims[3], num_heads=num_head, mlp_ratio=mlp_ratio, norm_layer=norm_layer)
+            dim=embed_dims[3], num_heads=num_head, mlp_ratio=mlp_ratio,norm_layer=norm_layer)
             for i in range(num_block)])
         self.norm4 = norm_layer(embed_dims[3])
 
@@ -230,11 +222,7 @@ class TemporalEncoder(nn.Module):
     def forward(self, x):
         outs = []
         # stage 1
-        # print(f"Input shape before conv1d: {x.shape}")
-        x = x.transpose(1, 2)
-        # print(f"Shape after transpose for conv1d: {x.shape}")
         x = self.Temporal_Merging_Block1(x)
-        # print(f"Shape after conv1d: {x.shape}")
         for i, blk in enumerate(self.block1):
             x = blk(x)
         x = self.norm1(x)

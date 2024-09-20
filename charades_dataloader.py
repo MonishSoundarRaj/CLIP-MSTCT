@@ -23,18 +23,15 @@ def make_dataset(split_file, split, root, num_classes=157):
             continue
 
         if not os.path.exists(os.path.join(root, vid + '.npy')):
-            print(f"File {vid}.npy not found, skipping.")
             continue
 
         if len(data[vid]['actions']) < 1:
-            print(f"No actions found for video {vid}, skipping.")
             continue
 
         fts = np.load(os.path.join(root, vid + '.npy'))
         num_feat = fts.shape[0]
-        print(f"Loaded {vid}.npy with {num_feat} features")
-
         label = np.zeros((num_feat, num_classes), np.float32)
+        #
         hmap = np.zeros((num_feat, num_classes), np.float32)
         action_lengths = []
         center_loc = []
@@ -42,6 +39,7 @@ def make_dataset(split_file, split, root, num_classes=157):
 
         fps = num_feat / data[vid]['duration']
         for ann in data[vid]['actions']:
+            # 
             if ann[2] < ann[1]:
                 continue
             mid_point = (ann[2] + ann[1]) / 2
@@ -49,22 +47,22 @@ def make_dataset(split_file, split, root, num_classes=157):
                 if fr / fps > ann[1] and fr / fps < ann[2]:
                     label[fr, ann[0]] = 1  # binary classification
 
+                # G* Ground truth Heat-map
+                # if fr / fps + 1 > mid_point and fr / fps < mid_point:
                 if (fr+1) / fps > mid_point and fr / fps < mid_point:
                     center = fr + 1
                     class_ = ann[0]
                     action_duration = int((ann[2] - ann[1]) * fps)
                     radius = int(action_duration / gamma)
                     generate_gaussian(hmap[:, class_], center, radius, tau, ku)
-                    num_action += 1
+                    num_action = num_action + 1
                     center_loc.append([center, class_])
                     action_lengths.append([action_duration])
 
         dataset.append((vid, label, data[vid]['duration'], [hmap, num_action, np.asarray(center_loc), np.asarray(action_lengths)]))
         i += 1
 
-    print(f"Total videos processed: {i}")
     return dataset
-
 
 
 class Charades(data_utl.Dataset):
@@ -83,7 +81,7 @@ class Charades(data_utl.Dataset):
     def __getitem__(self, index):
         entry = self.data[index]
         feat = np.load(os.path.join(self.root, entry[0] + '.npy'))
-       # feat = feat.reshape((feat.shape[0], 1, 1, feat.shape[-1]))
+        feat = feat.reshape((feat.shape[0], 1, 1, feat.shape[-1]))
         features = feat.astype(np.float32)
 
         labels = entry[1]
@@ -120,7 +118,7 @@ class collate_fn_unisize():
         max_len1= int(self.num_clips)
         new_batch = []
         for b in batch:
-            f = np.zeros((max_len, b[0].shape[1]), np.float32)
+            f = np.zeros((max_len, b[0].shape[1], b[0].shape[2], b[0].shape[3]), np.float32)
             m = np.zeros((max_len), np.float32)
             l = np.zeros((max_len, b[1].shape[1]), np.float32)
             h = np.zeros((max_len, b[2].shape[1]), np.float32)

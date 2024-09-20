@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
 export PATH=/pytorch_env/bin:$PATH
 
-export CUDA_VISIBLE_DEVICES=0
-
 python train.py \
 -dataset charades \
 -mode rgb \
@@ -16,5 +14,4 @@ python train.py \
 -unisize True \
 -alpha_l 1 \
 -beta_l 0.05 \
--batch_size 32 \
-
+-batch_size 32 

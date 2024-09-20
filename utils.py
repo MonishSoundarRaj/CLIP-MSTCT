@@ -225,7 +225,7 @@ def generate_gaussian(heatmap, center, radius, tau=3, k=1):
 
 
 def video_to_tensor(pic):
-    return torch.from_numpy(pic)
+    return torch.from_numpy(pic.transpose([3,0,1,2]))
 
 
 def str2bool(v):
