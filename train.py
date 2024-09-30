@@ -26,6 +26,8 @@ parser.add_argument('-lr', type=str, default='0.1')
 parser.add_argument('-epoch', type=str, default='50')
 parser.add_argument('-model', type=str, default='')
 parser.add_argument('-load_model', type=str, default='False')
+parser.add_argument('-load_model_path', type=str,
+                    default='./save_model/17.pth')
 parser.add_argument('-batch_size', type=str, default='False')
 parser.add_argument('-num_clips', type=str, default='False')
 parser.add_argument('-skip', type=str, default='False')
@@ -33,6 +35,9 @@ parser.add_argument('-num_layer', type=str, default='False')
 parser.add_argument('-unisize', type=str, default='False')
 parser.add_argument('-alpha_l', type=float, default='1.0')
 parser.add_argument('-beta_l', type=float, default='1.0')
+parser.add_argument('-save_path', type=str, default='./save_three_logit')
+parser.add_argument('-save_model_path', type=str, default='./save_model')
+
 args = parser.parse_args()
 
 # Set random seed
@@ -61,20 +66,19 @@ if args.dataset == 'charades':
 
     train_split = './data/charades.json'
     test_split = train_split
-    rgb_root = '/home/data/msoundar/outputs/'
-    clip_root = '/home/msoundar/clip-features-extract/clip_features_converted_l14/'
+    rgb_root = args.rgb_root
+    clip_root = args.clip_root
     classes = 157
 
 
 def load_data(train_split, val_split, rgb_root, clip_root):
-    # Load Data
     print('load data', rgb_root, clip_root)
 
     if len(train_split) > 0:
         dataset = Dataset(train_split, 'training', rgb_root, clip_root,
                           batch_size, classes, int(args.num_clips), int(args.skip))
-        dataloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=8,
-                                                 pin_memory=True, collate_fn=collate_fn)
+        dataloader = torch.utils.data.DataLoader(
+            dataset, batch_size=batch_size, shuffle=True, num_workers=8, pin_memory=True, collate_fn=collate_fn)
         dataloader.root = rgb_root
     else:
         dataset = None
@@ -82,8 +86,8 @@ def load_data(train_split, val_split, rgb_root, clip_root):
 
     val_dataset = Dataset(val_split, 'testing', rgb_root, clip_root,
                           batch_size, classes, int(args.num_clips), int(args.skip))
-    val_dataloader = torch.utils.data.DataLoader(val_dataset, batch_size=1, shuffle=True, num_workers=2,
-                                                 pin_memory=True, collate_fn=collate_fn)
+    val_dataloader = torch.utils.data.DataLoader(
+        val_dataset, batch_size=1, shuffle=False, num_workers=2, pin_memory=True, collate_fn=collate_fn)
     val_dataloader.root = rgb_root
     dataloaders = {'train': dataloader, 'val': val_dataloader}
     datasets = {'train': dataset, 'val': val_dataset}
@@ -115,32 +119,43 @@ def run(models, criterion, num_epochs=50):
                 Best_val_map = val_map
                 print("epoch", epoch, "Best Val Map Update", Best_val_map)
 
+                # Save the logits
                 pickle.dump(prob_val, open('./save_logit/' +
                             str(epoch) + '.pkl', 'wb'), pickle.HIGHEST_PROTOCOL)
                 print("logit_saved at:", "./save_logit/" + str(epoch) + ".pkl")
 
-                model_save_path = './save_model/' + \
-                    str(epoch) + '_best_model.pth'
+                # Save the model
+                model_save_path = f'{args.save_model_path}/{epoch}.pth'
                 torch.save(model.state_dict(), model_save_path)
                 print("Model saved at:", model_save_path)
                 best_model_path = model_save_path
 
 
-def eval_model(model, dataloader, baseline=False):
-    results = {}
-    for data in dataloader:
-        feat_i3d, feat_clip, labels_i3d, labels_clip, mask_i3d, mask_clip, hmap_i3d, hmap_clip, other_i3d, other_clip = data
-        other = other_i3d
-        outputs, loss, probs, _ = run_network(model, data, 0, baseline)
-        fps = outputs.size()[1] / other[1][0]
+def interleave_labels_heatmaps_masks(labels_i3d, labels_clip, hmap_i3d, hmap_clip, mask_i3d, mask_clip):
 
-        results[other[0][0]] = (outputs.data.cpu().numpy(
-        )[0], probs.data.cpu().numpy()[0], data[2].numpy()[0], fps)
-    return results
+    assert labels_i3d.shape == labels_clip.shape, "Labels for I3D and CLIP must have the same shape"
+    assert hmap_i3d.shape == hmap_clip.shape, "Heatmaps for I3D and CLIP must have the same shape"
+    assert mask_i3d.shape == mask_clip.shape, "Masks for I3D and CLIP must have the same shape"
+
+    batch_size, num_frames, num_classes = labels_i3d.shape
+
+    interleaved_labels = torch.zeros(
+        batch_size, num_frames * 2, num_classes).cuda()
+    interleaved_heatmaps = torch.zeros(
+        batch_size, num_frames * 2, num_classes).cuda()
+    interleaved_masks = torch.zeros(batch_size, num_frames * 2).cuda()
+
+    interleaved_labels[:, 0::2, :] = labels_i3d
+    interleaved_labels[:, 1::2, :] = labels_clip
+    interleaved_heatmaps[:, 0::2, :] = hmap_i3d
+    interleaved_heatmaps[:, 1::2, :] = hmap_clip
+    interleaved_masks[:, 0::2] = mask_i3d
+    interleaved_masks[:, 1::2] = mask_clip
+
+    return interleaved_labels, interleaved_heatmaps, interleaved_masks
 
 
-def run_network(model, data, gpu, epoch=0, baseline=False):
-
+def run_network(model, data, gpu, epoch=0):
     feat_i3d, feat_clip, labels_i3d, labels_clip, mask_i3d, mask_clip, hmap_i3d, hmap_clip, other_i3d, other_clip = data
 
     feat_i3d = Variable(feat_i3d.cuda(gpu))
@@ -154,22 +169,20 @@ def run_network(model, data, gpu, epoch=0, baseline=False):
     feat_i3d = feat_i3d.squeeze(3).squeeze(3)
     feat_clip = feat_clip.squeeze(3).squeeze(3)
 
-    outputs_final, out_hm = model(feat_i3d, feat_clip)
-    # print(outputs_final.shape) torch.Size([32, 512, 157])
-    # print(out_hm.shape) torch.Size([32, 157, 512])
-    # print(mask_clip.shape)
-    # print(mask_i3d.shape)
-    combined_mask = torch.cat((mask_i3d, mask_clip), dim=1)
-    combined_labels = torch.cat([labels_i3d, labels_clip], dim=1)
-    # print(combined_labels.shape)
-    combined_hmaps = torch.cat([hmap_i3d, hmap_clip], dim=1)
+    outputs_final, out_hm = model(feat_i3d, feat_clip, "combined")
+    combined_labels, combined_hmaps, combined_mask = interleave_labels_heatmaps_masks(
+        labels_i3d, labels_clip, hmap_i3d, hmap_clip, mask_i3d, mask_clip)
+    # combined_mask = torch.cat((mask_i3d, mask_clip), dim=1)
+    # combined_labels = torch.cat([labels_i3d, labels_clip], dim=1)
+    # combined_hmaps = torch.cat([hmap_i3d, hmap_clip], dim=1)
     # print(combined_hmaps.shape)
+    # print(combined_labels.shape)
+    # print(combined_mask.shape)
 
-    # logit
+    # Logits
     probs_f = F.sigmoid(outputs_final) * combined_mask.unsqueeze(2)
 
     loss_h = focal_loss(out_hm, combined_hmaps)
-
     loss_f = F.binary_cross_entropy_with_logits(
         outputs_final, combined_labels, size_average=False)
 
@@ -222,23 +235,24 @@ def val_step(model, gpu, dataloader, epoch):
     for data in dataloader:
         num_iter += 1
         feat_i3d, feat_clip, labels_i3d, labels_clip, mask_i3d, mask_clip, hmap_i3d, hmap_clip, other_i3d, other_clip = data
-
-        combined_mask = torch.cat([mask_i3d, mask_clip], dim=1)
+        combined_labels, combined_hmaps, combined_mask = interleave_labels_heatmaps_masks(
+            labels_i3d, labels_clip, hmap_i3d, hmap_clip, mask_i3d, mask_clip)
+        # combined_mask = torch.cat([mask_i3d, mask_clip], dim=1)
 
         outputs, loss, probs, err = run_network(model, data, gpu, epoch)
 
-        combined_labels = torch.cat([labels_i3d, labels_clip], dim=1)
+        # combined_labels = torch.cat([labels_i3d, labels_clip], dim=1)
 
-        if sum(combined_mask.numpy()[0]) > 25:
+        if sum(combined_mask.cpu().numpy()[0]) > 25:
             p1, l1 = sampled_25(probs.data.cpu().numpy()[0], combined_labels.cpu().numpy()[
-                                0], combined_mask.numpy()[0])
+                                0], combined_mask.cpu().numpy()[0])
             sampled_apm.add(p1, l1)
 
         apm.add(probs.data.cpu().numpy()[0], combined_labels.cpu().numpy()[0])
         error += err.data
         tot_loss += loss.data
         probs_1 = mask_probs(probs.data.cpu().numpy()[
-                             0], combined_mask.numpy()[0]).squeeze()
+                             0], combined_mask.cpu().numpy()[0]).squeeze()
         # print(other)
         full_probs[other_i3d[0][0]] = probs_1.T
 
@@ -259,44 +273,181 @@ def val_step(model, gpu, dataloader, epoch):
     return full_probs, epoch_loss, val_map
 
 
+def run_network_i3d(model, inputs_i3d, mask_i3d, gpu):
+    inputs_i3d = Variable(inputs_i3d.cuda(gpu))
+    mask_i3d = Variable(mask_i3d.cuda(gpu))
+
+    inputs_i3d = inputs_i3d.squeeze(3).squeeze(3)
+
+    outputs_final, out_hm = model(inputs_i3d=inputs_i3d, mode='i3d')
+
+    probs = F.sigmoid(outputs_final)
+
+    probs_f = mask_probs(probs.detach().cpu().numpy()[
+                         0], mask_i3d.detach().cpu().numpy()[0]).squeeze()
+
+    return outputs_final, probs_f
+
+
+def run_network_clip(model, inputs_clip, mask_clip, gpu):
+    inputs_clip = Variable(inputs_clip.cuda(gpu))
+    mask_clip = Variable(mask_clip.cuda(gpu))
+
+    inputs_clip = inputs_clip.squeeze(3).squeeze(3)
+
+    outputs_final, out_hm = model(
+        inputs_i3d=None, inputs_clip=inputs_clip,  mode='clip')
+
+    probs = F.sigmoid(outputs_final)
+    probs_f = mask_probs(probs.detach().cpu().numpy()[
+                         0], mask_clip.detach().cpu().numpy()[0]).squeeze()
+
+    return outputs_final, probs_f
+
+
+# def run_network_combined(model, inputs_i3d, inputs_clip, mask_i3d, mask_clip, gpu):
+#     inputs_i3d = Variable(inputs_i3d.cuda(gpu))
+#     inputs_clip = Variable(inputs_clip.cuda(gpu))
+#     mask_i3d = Variable(mask_i3d.cuda(gpu))
+#     mask_clip = Variable(mask_clip.cuda(gpu))
+
+#     inputs_i3d = inputs_i3d.squeeze(3).squeeze(3)
+#     inputs_clip = inputs_clip.squeeze(3).squeeze(3)
+
+#     # Forward pass for combined I3D + CLIP
+#     outputs_final, out_hm = model(
+#         inputs_i3d=inputs_i3d, inputs_clip=inputs_clip, mode='combined')
+#     combined_labels, combined_hmaps, combined_mask = interleave_labels_heatmaps_masks()
+#     # combined_mask = torch.cat([mask_i3d, mask_clip], dim=1)
+#     probs = F.sigmoid(outputs_final)
+#     probs_f = mask_probs(probs.detach().cpu().numpy()[
+#                          0], combined_mask.detach().cpu().numpy()[0]).squeeze()
+
+#     return outputs_final, probs_f
+
+
+def eval_model(model, dataloader, save_path):
+    eval_step(model, 0, dataloader, save_path)
+
+
+def load_model_for_eval(model, model_path):
+    print(f"Loading model weights from: {model_path}")
+    model.load_state_dict(torch.load(model_path))
+    model.eval()
+    return model
+
+
+def eval_step(model, gpu, dataloader, save_path):
+    model.train(False)
+    full_probs_i3d = {}
+    full_probs_clip = {}
+    full_probs_combined = {}
+    frame_metadata = {}
+
+    for data in dataloader:
+        feat_i3d, feat_clip, labels_i3d, labels_clip, mask_i3d, mask_clip, hmap_i3d, hmap_clip, other_i3d, other_clip = data
+
+        # Run I3D-only inference
+        outputs_i3d, probs_i3d = run_network_i3d(
+            model, feat_i3d, mask_i3d, gpu)
+        full_probs_i3d[other_i3d[0][0]
+                       ] = probs_i3d.T
+
+        # Run CLIP-only inference
+        outputs_clip, probs_clip = run_network_clip(
+            model, feat_clip, mask_clip, gpu)
+        full_probs_clip[other_clip[0][0]
+                        ] = probs_clip.T
+
+        # # Run combined inference
+        # outputs_combined, probs_combined = run_network_combined(
+        #     model, feat_i3d, feat_clip, mask_i3d, mask_clip, gpu)
+        # full_probs_combined[other_i3d[0][0]
+        #                     ] = probs_combined.T
+
+        frame_metadata[other_i3d[0][0]] = {
+            'i3d_frames': other_i3d[3],
+            'clip_frames': other_clip[3]
+        }
+
+    pickle.dump(full_probs_i3d, open(
+        f'{save_path}/logits_i3d.pkl', 'wb'), pickle.HIGHEST_PROTOCOL)
+    pickle.dump(full_probs_clip, open(
+        f'{save_path}/logits_clip.pkl', 'wb'), pickle.HIGHEST_PROTOCOL)
+    # pickle.dump(full_probs_combined, open(
+    #     f'{save_path}/logits_combined.pkl', 'wb'), pickle.HIGHEST_PROTOCOL)
+
+    # pickle.dump(frame_metadata, open(
+    #     f'{save_path}/frame_metadata.pkl', 'wb'), pickle.HIGHEST_PROTOCOL)
+
+
 if __name__ == '__main__':
-    if args.mode == 'flow':
-        print('flow mode', rgb_root)
+
+    if not args.train:
         dataloaders, datasets = load_data(
             train_split, test_split, rgb_root, clip_root)
-    elif args.mode == 'rgb':
-        print('RGB mode', rgb_root)
-        dataloaders, datasets = load_data(
-            train_split, test_split, rgb_root, clip_root)
+        print("Running evaluation mode...")
+        model_path = args.load_model_path
+        if not os.path.exists('./save_three_logit'):
+            os.makedirs('./save_three_logit')
+        from MSTCT.MSTCT_Model import MSTCT
+        num_clips = int(args.num_clips)
+        num_classes = classes
+        inter_channels = [256, 384, 576, 864]
+        num_block = 3
+        head = 8
+        mlp_ratio = 8
+        in_feat_dim = 1024
+        final_embedding_dim = 512
 
-    if not os.path.exists('./save_logit'):
-        os.makedirs('./save_logit')
+        input_size = 768
 
-    if args.train:
+        model = MSTCT(inter_channels, num_block, head, mlp_ratio,
+                      in_feat_dim, final_embedding_dim, num_classes, input_size)
+        model = load_model_for_eval(model, model_path)
+        model = model.cuda()
 
-        if args.model == "MS_TCT":
-            print("MS_TCT")
-            from MSTCT.MSTCT_Model import MSTCT
-            num_clips = int(args.num_clips)
-            num_classes = classes
-            inter_channels = [256, 384, 576, 864]
-            num_block = 3
-            head = 8
-            mlp_ratio = 8
-            in_feat_dim = 1024
-            final_embedding_dim = 512
-            input_size = 768
+        eval_model(model, dataloaders['val'], args.save_path)
 
-            rgb_model = MSTCT(inter_channels, num_block, head, mlp_ratio,
-                              in_feat_dim, final_embedding_dim, num_classes, input_size)
-            print("loaded", args.load_model)
+    else:
+        from MSTCT.MSTCT_Model import MSTCT
+        if args.mode == 'flow':
+            print('flow mode', rgb_root)
+            dataloaders, datasets = load_data(
+                train_split, test_split, rgb_root, clip_root)
+        elif args.mode == 'rgb':
+            print('RGB mode', rgb_root)
+            dataloaders, datasets = load_data(
+                train_split, test_split, rgb_root, clip_root)
 
-        rgb_model.cuda()
+        if not os.path.exists('./save_logit'):
+            os.makedirs('./save_logit')
+        if not os.path.exists('./save_model'):
+            os.makedirs('./save_model')
+        if args.train:
+            if args.model == "MS_TCT":
+                print("MS_TCT")
+                from MSTCT.MSTCT_Model import MSTCT
+                num_clips = int(args.num_clips)
+                num_classes = classes
+                inter_channels = [256, 384, 576, 864]
+                num_block = 3
+                head = 8
+                mlp_ratio = 8
+                in_feat_dim = 1024
+                final_embedding_dim = 512
+                input_size = 768
 
-        criterion = nn.NLLLoss(reduce=False)
-        lr = float(args.lr)
-        optimizer = optim.Adam(rgb_model.parameters(), lr=lr)
-        lr_sched = optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer, factor=0.5, patience=8, verbose=True)
-        run([(rgb_model, 0, dataloaders, optimizer, lr_sched,
-            args.comp_info)], criterion, num_epochs=int(args.epoch))
+                rgb_model = MSTCT(inter_channels, num_block, head, mlp_ratio,
+                                  in_feat_dim, final_embedding_dim, num_classes, input_size)
+                print("loaded", args.load_model)
+
+                rgb_model.cuda()
+
+                criterion = nn.NLLLoss(reduce=False)
+                lr = float(args.lr)
+                optimizer = optim.Adam(rgb_model.parameters(), lr=lr)
+                lr_sched = optim.lr_scheduler.ReduceLROnPlateau(
+                    optimizer, factor=0.5, patience=8, verbose=True)
+                run([(rgb_model, 0, dataloaders, optimizer, lr_sched,
+                    args.comp_info)], criterion, num_epochs=int(args.epoch))

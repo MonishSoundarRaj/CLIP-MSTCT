@@ -15,12 +15,13 @@ def make_gt(gt_file, logits, num_classes=157):
         gt = json.load(f)
 
     i = 0
-    gt_len=0
+    gt_len = 0
     for vid in gt.keys():
         if gt[vid]['subset'] != "testing":
             continue
         else:
-            gt_len=gt_len+1
+            gt_len = gt_len+1
+
     for vid in gt.keys():
         if gt[vid]['subset'] != "testing":
             continue
@@ -35,11 +36,11 @@ def make_gt(gt_file, logits, num_classes=157):
             for fr in range(0, num_pred, 1):
                 if fr / fps > ann[1] and fr / fps < ann[2]:
                     label[fr, ann[0]] = 1
-        gt_new[vid]=label
-        vid_length[vid]=gt[vid]['duration']
-        fps_seg[vid]=fps
+        gt_new[vid] = label
+        vid_length[vid] = gt[vid]['duration']
+        fps_seg[vid] = fps
         i += 1
-    return gt_new,vid_length,fps_seg
+    return gt_new, vid_length, fps_seg
 
 
 if __name__ == '__main__':
@@ -57,35 +58,36 @@ if __name__ == '__main__':
 
     logits = pickle.load(pkl)
 
-    gt_new,vid_len,fps_seg=make_gt(gt_file,logits,classes)
+    gt_new, vid_len, fps_seg = make_gt(gt_file, logits, classes)
 
     # Compute mAP
     apm = APMeter()
-    sampled_apm=APMeter()
-    first_idx=0
-    idx=0
-    pred_probs=[]
-    gt_labels=[]
-
+    sampled_apm = APMeter()
+    first_idx = 0
+    idx = 0
+    pred_probs = []
+    gt_labels = []
+    print(len(gt_new.keys()))
     for vid in gt_new.keys():
-        idx=idx+1
+        idx = idx+1
         logit = np.transpose(logits[vid], (1, 0))
 
         apm.add(logit, gt_new[vid])
-        sampled_25_inference(logit,gt_new[vid],sampled_apm)
+        sampled_25_inference(logit, gt_new[vid], sampled_apm)
         pred_probs.append(logit)
         gt_labels.append(gt_new[vid])
 
     # per-frame mAP
     val_map = 100 * apm.value().mean()
-    sample_val_map = 100 *sampled_apm.value().mean()
-    print ("Test Frame-based map", val_map)
-    print ("25 sampled Frame-based map", sample_val_map)
-    print ("APs for the classes",100 * apm.value())
+    sample_val_map = 100 * sampled_apm.value().mean()
+    print("Test Frame-based map", val_map)
+    print("25 sampled Frame-based map", sample_val_map)
+    print("APs for the classes", 100 * apm.value())
 
     # action-conditional metrics for different t
     # t=0
-    prec0, re0, ns0, map0 = conditional_metric(pred_probs, gt_labels, t=0, avg=True)
+    prec0, re0, ns0, map0 = conditional_metric(
+        pred_probs, gt_labels, t=0, avg=True)
     fs0 = get_f1(prec0, re0)  # action conditional f1-score
     print('Precision(c_i|c_j,0)=', prec0)
     print('Recall(c_i|c_j,0)=', re0)
@@ -93,7 +95,8 @@ if __name__ == '__main__':
     print('mAP(c_i|c_j,0)=', map0)
 
     # t=20
-    prec20, re20, ns20, map20 = conditional_metric(pred_probs, gt_labels, t=20, avg=True)
+    prec20, re20, ns20, map20 = conditional_metric(
+        pred_probs, gt_labels, t=20, avg=True)
     fs20 = get_f1(prec20, re20)  # action conditional f1-score
     print('Precision(c_i|c_j,20)=', prec20)
     print('Recall(c_i|c_j,20)=', re20)
@@ -101,11 +104,10 @@ if __name__ == '__main__':
     print('mAP(c_i|c_j,20)=', map20)
 
     # t=40
-    prec40, re40, ns40, map40 = conditional_metric(pred_probs, gt_labels, t=40, avg=True)
+    prec40, re40, ns40, map40 = conditional_metric(
+        pred_probs, gt_labels, t=40, avg=True)
     fs40 = get_f1(prec40, re40)  # action conditional f1-score
     print('Precision(c_i|c_j,40)=', prec40)
     print('Recall(c_i|c_j,40)=', re40)
     print('F1Score(c_i|c_j,40)=', fs40)
     print('mAP(c_i|c_j,40)=', map40)
-
-

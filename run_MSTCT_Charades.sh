@@ -5,7 +5,7 @@ python train.py \
 -dataset charades \
 -mode rgb \
 -model MS_TCT \
--train True \
+-train False \
 -num_clips 256 \
 -skip 0 \
 -lr 0.0001 \
@@ -14,4 +14,6 @@ python train.py \
 -unisize True \
 -alpha_l 1 \
 -beta_l 0.05 \
--batch_size 32 
+-batch_size 32 \
+-rgb_root "/home/data/msoundar/outputs/" \
+-clip_root "/home/msoundar/clip-features-extract/clip_features_converted_l14/"

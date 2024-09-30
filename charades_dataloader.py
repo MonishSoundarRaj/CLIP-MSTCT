@@ -89,7 +89,7 @@ def make_dataset(split_file, split, i3d_root, clip_root, num_classes=157):
                     action_lengths_clip.append([action_duration])
 
         dataset.append((vid, label_i3d, label_clip, data[vid]['duration'], [
-                       hmap_i3d, hmap_clip, num_action_i3d, num_action_clip, np.asarray(center_loc_i3d), np.asarray(center_loc_clip),  np.asarray(action_lengths_i3d), np.asarray(action_lengths_clip)]))
+                       hmap_i3d, hmap_clip, num_action_i3d, num_action_clip, np.asarray(center_loc_i3d), np.asarray(center_loc_clip),  np.asarray(action_lengths_i3d), np.asarray(action_lengths_clip), num_feat_i3d, num_feat_clip]))
         i += 1
 
     return dataset
@@ -120,7 +120,7 @@ class Charades(data_utl.Dataset):
 
         labels_i3d = entry[1]
         labels_clip = entry[2]
-        hmap_i3d, hmap_clip, num_action_i3d, num_action_clip, center_loc_i3d, center_loc_clip, action_lengths_i3d, action_lengths_clip = entry[
+        hmap_i3d, hmap_clip, num_action_i3d, num_action_clip, center_loc_i3d, center_loc_clip, action_lengths_i3d, action_lengths_clip, num_feat_i3d, num_feat_clip = entry[
             4]
 
         num_clips = self.num_clips
@@ -148,7 +148,7 @@ class Charades(data_utl.Dataset):
                 labels_clip = labels_clip[random_index: random_index + num_clips]
                 hmap_clip = hmap_clip[random_index: random_index + num_clips]
 
-        return feat_i3d, feat_clip, labels_i3d, labels_clip, hmap_i3d, hmap_clip, action_lengths_i3d, action_lengths_clip, [entry[0], entry[3], num_action_i3d], [entry[0], entry[3], num_action_clip]
+        return feat_i3d, feat_clip, labels_i3d, labels_clip, hmap_i3d, hmap_clip, action_lengths_i3d, action_lengths_clip, [entry[0], entry[3], num_action_i3d, num_feat_i3d], [entry[0], entry[3], num_action_clip, num_feat_clip]
 
     def __len__(self):
         return len(self.data)
