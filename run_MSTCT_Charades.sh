@@ -6,6 +6,7 @@ python train.py \
 -mode rgb \
 -model MS_TCT \
 -train False \
+-train_mode "interleaved" \
 -num_clips 256 \
 -skip 0 \
 -lr 0.0001 \

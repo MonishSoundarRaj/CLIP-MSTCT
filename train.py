@@ -37,6 +37,8 @@ parser.add_argument('-alpha_l', type=float, default='1.0')
 parser.add_argument('-beta_l', type=float, default='1.0')
 parser.add_argument('-save_path', type=str, default='./save_three_logit')
 parser.add_argument('-save_model_path', type=str, default='./save_model')
+# non-interleaved or interleaved
+parser.add_argument('-train_mode', type=str, default='non-interleaved')
 
 args = parser.parse_args()
 
@@ -50,6 +52,7 @@ random.seed(SEED)
 torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 print('Random_SEED:', SEED)
+print('Train_Mode:', args.train_mode)
 
 batch_size = int(args.batch_size)
 
@@ -170,14 +173,16 @@ def run_network(model, data, gpu, epoch=0):
     feat_clip = feat_clip.squeeze(3).squeeze(3)
 
     outputs_final, out_hm = model(feat_i3d, feat_clip, "combined")
-    combined_labels, combined_hmaps, combined_mask = interleave_labels_heatmaps_masks(
-        labels_i3d, labels_clip, hmap_i3d, hmap_clip, mask_i3d, mask_clip)
-    # combined_mask = torch.cat((mask_i3d, mask_clip), dim=1)
-    # combined_labels = torch.cat([labels_i3d, labels_clip], dim=1)
-    # combined_hmaps = torch.cat([hmap_i3d, hmap_clip], dim=1)
-    # print(combined_hmaps.shape)
-    # print(combined_labels.shape)
-    # print(combined_mask.shape)
+    if args.train_mode == 'interleaved':
+        combined_labels, combined_hmaps, combined_mask = interleave_labels_heatmaps_masks(
+            labels_i3d, labels_clip, hmap_i3d, hmap_clip, mask_i3d, mask_clip)
+    elif args.train_mode == 'non-interleaved':
+        combined_mask = torch.cat((mask_i3d, mask_clip), dim=1)
+        combined_labels = torch.cat([labels_i3d, labels_clip], dim=1)
+        combined_hmaps = torch.cat([hmap_i3d, hmap_clip], dim=1)
+    # print(combined_hmaps.shape) # [32,512,157]
+    # print(combined_labels.shape) # [32,512,157]
+    # print(combined_mask.shape) # [32,512]
 
     # Logits
     probs_f = F.sigmoid(outputs_final) * combined_mask.unsqueeze(2)
@@ -207,7 +212,13 @@ def train_step(model, gpu, optimizer, dataloader, epoch):
         num_iter += 1
         feat_i3d, feat_clip, labels_i3d, labels_clip, mask_i3d, mask_clip, hmap_i3d, hmap_clip, other_i3d, other_clip = data
         outputs, loss, probs, err = run_network(model, data, gpu, epoch)
-        combined_labels = torch.cat([labels_i3d, labels_clip], dim=1)
+
+        if args.train_mode == 'interleaved':
+            combined_labels, combined_hmaps, combined_mask = interleave_labels_heatmaps_masks(
+                labels_i3d, labels_clip, hmap_i3d, hmap_clip, mask_i3d, mask_clip)
+        elif args.train_mode == 'non-interleaved':
+            combined_labels = torch.cat([labels_i3d, labels_clip], dim=1)
+
         apm.add(probs.data.cpu().numpy()[0], combined_labels.cpu().numpy()[0])
         error += err.data
         tot_loss += loss.data
@@ -235,13 +246,15 @@ def val_step(model, gpu, dataloader, epoch):
     for data in dataloader:
         num_iter += 1
         feat_i3d, feat_clip, labels_i3d, labels_clip, mask_i3d, mask_clip, hmap_i3d, hmap_clip, other_i3d, other_clip = data
-        combined_labels, combined_hmaps, combined_mask = interleave_labels_heatmaps_masks(
-            labels_i3d, labels_clip, hmap_i3d, hmap_clip, mask_i3d, mask_clip)
-        # combined_mask = torch.cat([mask_i3d, mask_clip], dim=1)
+
+        if args.train_mode == 'interleaved':
+            combined_labels, combined_hmaps, combined_mask = interleave_labels_heatmaps_masks(
+                labels_i3d, labels_clip, hmap_i3d, hmap_clip, mask_i3d, mask_clip)
+        elif args.train_mode == 'non-interleaved':
+            combined_labels = torch.cat([labels_i3d, labels_clip], dim=1)
+            combined_mask = torch.cat([mask_i3d, mask_clip], dim=1)
 
         outputs, loss, probs, err = run_network(model, data, gpu, epoch)
-
-        # combined_labels = torch.cat([labels_i3d, labels_clip], dim=1)
 
         if sum(combined_mask.cpu().numpy()[0]) > 25:
             p1, l1 = sampled_25(probs.data.cpu().numpy()[0], combined_labels.cpu().numpy()[
@@ -374,6 +387,7 @@ def eval_step(model, gpu, dataloader, save_path):
         f'{save_path}/logits_i3d.pkl', 'wb'), pickle.HIGHEST_PROTOCOL)
     pickle.dump(full_probs_clip, open(
         f'{save_path}/logits_clip.pkl', 'wb'), pickle.HIGHEST_PROTOCOL)
+
     # pickle.dump(full_probs_combined, open(
     #     f'{save_path}/logits_combined.pkl', 'wb'), pickle.HIGHEST_PROTOCOL)
 
@@ -384,9 +398,9 @@ def eval_step(model, gpu, dataloader, save_path):
 if __name__ == '__main__':
 
     if not args.train:
+        print("Running evaluation mode...")
         dataloaders, datasets = load_data(
             train_split, test_split, rgb_root, clip_root)
-        print("Running evaluation mode...")
         model_path = args.load_model_path
         if not os.path.exists('./save_three_logit'):
             os.makedirs('./save_three_logit')
@@ -425,6 +439,7 @@ if __name__ == '__main__':
         if not os.path.exists('./save_model'):
             os.makedirs('./save_model')
         if args.train:
+            print("Running Training mode")
             if args.model == "MS_TCT":
                 print("MS_TCT")
                 from MSTCT.MSTCT_Model import MSTCT
